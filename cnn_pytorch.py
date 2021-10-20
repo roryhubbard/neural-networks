@@ -14,9 +14,9 @@ class SimpleNet(nn.Module):
 
   def __init__(self):
     super().__init__()
-    # 28x28 -> 11x11
+    # 28x28x1 -> 11x11x4
     self.conv1 = nn.Conv2d(1, 4, kernel_size=8, stride=2)
-    # 11x11 -> 8x8
+    # 11x11x4 -> 8x8x8
     self.conv2 = nn.Conv2d(4, 8, kernel_size=4, stride=1)
     self.fl1 = nn.Linear(8 * 8 * 8, 16)
     # output 10 nodes for the 10 possible digitis [0 - 9]
