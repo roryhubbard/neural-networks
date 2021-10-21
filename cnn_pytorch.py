@@ -73,7 +73,7 @@ def main():
       test_predictions = simple_net(x_test).argmax(1)
       correct += (test_predictions == y_test).sum().item() 
 
-  print('accuracy:', correct * 100. / len(test_loader.dataset))
+  print('accuracy:', correct * 100. / len(test_loader.dataset), '%')
 
 
 if __name__ == '__main__':
