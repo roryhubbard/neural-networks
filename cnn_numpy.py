@@ -48,10 +48,7 @@ def one_hot_encode(y):
 
 
 def relu_derivative(x):
-  if x.ndim == 1:
-    out = np.zeros(*x.shape)
-  else:
-    out = np.zeros(x.shape)
+  out = np.zeros(*x.shape) if x.ndim == 1 else np.zeros(x.shape)
   out[x > 0] = 1
   return out
 
@@ -62,19 +59,25 @@ def conv2_backward(X, dV, W):
   dV = gradient wrt output volume
   W = filter set that we are calculating the derivative of
   """
+  if X.ndim < 3:
+    X = X[..., np.newaxis]
   I, J, K = dV.shape
   dW = np.zeros(W.shape)
+  dX = np.zeros(X.shape)
   fh, fw, fd = W.shape[1:]
   for k in range(K):
     for i in range(I):
       for j in range(J):
         dW[k] += np.outer(X[i:i+fh, j:j+fw, :], dV[i, j, k]).reshape(fh, fw, fd)
-  return dW
+        dX[i:i+fh, j:j+fw, :] += np.outer(W[k], dV[i, j, k]).reshape(fh, fw, fd)
+  return dW, dX
 
 
 class NumpyNet:
 
-  def __init__(self):
+  def __init__(self, learning_rate):
+    self.learning_rate = learning_rate
+
     self.W0 = initialize_conv_weights(8, 1, 4)
     self.b0 = np.zeros(4)
 
@@ -89,14 +92,14 @@ class NumpyNet:
 
   def forward(self, x, y, y_one_hot):
     loss_average = 0
-    dW3_average = np.zeros((16, 10))
-    db3_average= np.zeros(10)
-    dW2_average = np.zeros((8 * 8 * 8, 16))
-    db2_average = np.zeros(16)
-    dW1_average = np.zeros((8, 4, 4, 4))
-    db1_average = np.zeros(8)
-    dW0_average = np.zeros((8, 8))
-    db0_average = np.zeros(4)
+    self.dW3_average = np.zeros((16, 10))
+    self.db3_average= np.zeros(10)
+    self.dW2_average = np.zeros((8 * 8 * 8, 16))
+    self.db2_average = np.zeros(16)
+    self.dW1_average = np.zeros((8, 4, 4, 4))
+    self.db1_average = np.zeros(8)
+    self.dW0_average = np.zeros((4, 8, 8, 1))
+    self.db0_average = np.zeros(4)
 
     for idx, img in enumerate(x):
       # forward
@@ -121,36 +124,55 @@ class NumpyNet:
       db3 = dh1
 
       dz2 = dh1 @ self.W3.T
-      dz2dh0 = relu_derivative(h0)
-      dh0 = dz2 * dz2dh0
+      dh0 = dz2 * relu_derivative(h0)
 
       dW2 = np.outer(z1, dh0)
-      db2 = dz2dh0
+      db2 = dh0
 
       dz1 = (dh0 @ self.W2.T).reshape(8, 8, 8)
       dV1 = dz1 * relu_derivative(V1)
 
-      dW1 = conv2_backward(z0, dV1, self.W1)
+      dW1, dz0 = conv2_backward(z0, dV1, self.W1)
       db1 = dV1.mean(axis=(0, 1))
-      return
 
-      dW3_average += dW3
-      db3_average += db3
-      dW2_average += dW2
-      db2_average += db2
-      dW1_average += dW1
-      db1_average += db1
+      dV0 = dz0 * relu_derivative(z0)
+      dW0, dimg = conv2_backward(img, dV0, self.W0)
+      db0 = dV0.mean(axis=(0, 1))
+
+      self.dW3_average += dW3
+      self.db3_average += db3
+      self.dW2_average += dW2
+      self.db2_average += db2
+      self.dW1_average += dW1
+      self.db1_average += db1
+      self.dW0_average += dW0
+      self.db0_average += db0
 
     n = len(x)
     loss_average /= n
-    dW3_average /= n
-    db3_average /= n
-    dW2_average /= n
-    db2_average /= n
-    dW1_average /= n
-    db1_average /= n
+    self.dW3_average /= n
+    self.db3_average /= n
+    self.dW2_average /= n
+    self.db2_average /= n
+    self.dW1_average /= n
+    self.db1_average /= n
+    self.dW0_average /= n
+    self.db0_average /= n
 
     return loss_average
+
+  def step(self):
+    self.W0 -= self.learning_rate * self.dW0_average
+    self.b0 -= self.learning_rate * self.db0_average
+
+    self.W1 -= self.learning_rate * self.dW1_average
+    self.b1 -= self.learning_rate * self.db1_average
+
+    self.W2 -= self.learning_rate * self.dW2_average
+    self.b2 -= self.learning_rate * self.db2_average
+
+    self.W3 -= self.learning_rate * self.dW3_average
+    self.b3 -= self.learning_rate * self.db3_average
 
   def conv1(self, img):
     out_volume = np.empty((11, 11, 4))
@@ -182,9 +204,6 @@ class NumpyNet:
   def linear2(self, V):
     return V @ self.W3 + self.b3
 
-  def backward(self, grad):
-    pass
-
 
 def main():
   batch_size_train = 64
@@ -209,7 +228,7 @@ def main():
                                ])),
     batch_size=batch_size_test, shuffle=True)
 
-  model = NumpyNet()
+  model = NumpyNet(learning_rate)
 
   # train
   for x_batch, y_batch in tqdm(train_loader):
@@ -218,8 +237,6 @@ def main():
 
     one_hot_target = one_hot_encode(y_batch)
     loss = model.forward(x_batch, y_batch, one_hot_target)
-
-    return
 
 
 if __name__ == "__main__":
