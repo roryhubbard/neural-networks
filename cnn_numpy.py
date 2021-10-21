@@ -6,11 +6,14 @@ import torch
 import torchvision
 
 
-def initialize_conv_weights(k, d, n):
+def initialize_conv_weights(n, k, d):
   """
-  k = kernel size
-  d = input depth
-  n = output depth
+  n = number of filters
+  k = filter width (same as height)
+  d = filter depth
+
+  Returns:
+  np.ndarray: (# of filters, filter height, filter width, filter depth)
   """
   rng = np.random.default_rng()
   return rng.uniform(-1/math.sqrt(k*k), 1/math.sqrt(k*k), (n,k,k,d))
@@ -25,8 +28,28 @@ def initialize_fc_weights(m, n):
   return rng.uniform(-math.sqrt(6/(m+n)), math.sqrt(6/(m+n)), (m,n))
 
 
-def linear(x, w, b):
-  return x @ w + b
+def linear(X, W, b):
+  return X @ W + b
+
+
+def conv(X, W, b, stride=1):
+  """
+  X = input to be convolved (assumed to be square)
+  W = filters (assumed to be square)
+  b = biases (assumed to be "tied": one bias per feature map)
+  """
+  num_filters = W.shape[0]
+  out_depth = num_filters
+  filter_width = W.shape[1]
+  out_width = (X.shape[0] - filter_width) // stride + 1
+  out_volume = np.empty((out_width, out_width, out_depth))
+  for k, w in enumerate(W):
+    w = w.squeeze()
+    for i in range(out_width):
+      for j in range(out_width):
+        out_volume[i, j, k] = np.sum(
+          X[i*stride:i*stride+filter_width, j*stride:j*stride+filter_width] * w) + b[k]
+  return out_volume
 
 
 def relu(x):
@@ -83,10 +106,10 @@ class NumpyNet:
   def __init__(self, learning_rate):
     self.learning_rate = learning_rate
 
-    self.W0 = initialize_conv_weights(8, 1, 4)
+    self.W0 = initialize_conv_weights(4, 8, 1)
     self.b0 = np.zeros(4)
 
-    self.W1 = initialize_conv_weights(4, 4, 8)
+    self.W1 = initialize_conv_weights(8, 4, 4)
     self.b1 = np.zeros(8)
 
     self.W2 = initialize_fc_weights(8 * 8 * 8, 16)
@@ -98,9 +121,9 @@ class NumpyNet:
   def predict(self, x):
     output = []
     for img in x:
-      V0 = self.conv1(img)
+      V0 = conv(img, self.W0, self.b0, stride=2)
       z0 = relu(V0)
-      V1 = self.conv2(z0)
+      V1 = conv(z0, self.W1, self.b1, stride=1)
       z1 = relu(V1.flatten())
       h0 = linear(z1, self.W2, self.b2)
       z2 = relu(h0)
@@ -121,10 +144,10 @@ class NumpyNet:
 
     for idx, img in enumerate(x):
       # forward
-      V0 = self.conv1(img)
+      V0 = conv(img, self.W0, self.b0, stride=2)
       z0 = relu(V0)
 
-      V1 = self.conv2(z0)
+      V1 = conv(z0, self.W1, self.b1, stride=1)
       z1 = relu(V1.flatten())
 
       h0 = linear(z1, self.W2, self.b2)
@@ -192,30 +215,6 @@ class NumpyNet:
     self.W3 -= self.learning_rate * self.dW3_average
     self.b3 -= self.learning_rate * self.db3_average
 
-  def conv1(self, img):
-    out_volume = np.empty((11, 11, 4))
-    for k, w in enumerate(self.W0):
-      w = w.squeeze()
-      bias = self.b0[k]
-      kernel_size = w.shape[0]
-      for i in range(11):
-        for j in range(11):
-          out_volume[i, j, k] = np.sum(
-            img[i*2:i*2+kernel_size, j*2:j*2+kernel_size] * w) + bias
-    return out_volume
-
-  def conv2(self, V):
-    out_volume = np.empty((8, 8, 8))
-    for k, w in enumerate(self.W1):
-      w = w.squeeze()
-      bias = self.b1[k]
-      kernel_size = w.shape[0]
-      for i in range(8):
-        for j in range(8):
-          out_volume[i, j, k] = np.sum(
-            V[i:i+kernel_size, j:j+kernel_size] * w) + bias
-    return out_volume
-
   def save_parameters(self):
     with open('trained_model.npz', 'wb') as f:
       np.savez(f,
@@ -260,6 +259,11 @@ def main():
     loss = model.train(x_batch, y_batch, one_hot_target)
     model.step()
     losses.append(loss)
+
+  fig, ax = plt.subplots()
+  ax.plot(losses)
+  plt.show()
+  plt.close()
 
   model.save_parameters()
 
