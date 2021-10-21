@@ -1,6 +1,7 @@
 import math
 from tqdm import tqdm
 import numpy as np
+import matplotlib.pyplot as plt
 import torch
 import torchvision
 
@@ -89,6 +90,19 @@ class NumpyNet:
 
     self.W3 = initialize_fc_weights(16, 10)
     self.b3 = np.zeros(10)
+
+  def predict(self, x):
+    output = []
+    for img in x:
+      V0 = self.conv1(img)
+      z0 = relu(V0)
+      V1 = self.conv2(z0)
+      z1 = relu(V1.flatten())
+      h0 = self.linear1(z1)
+      z2 = relu(h0)
+      h1 = self.linear2(z2)
+      output.append(softmax(h1).argmax())
+    return np.array(output)
 
   def forward(self, x, y, y_one_hot):
     loss_average = 0
@@ -204,6 +218,14 @@ class NumpyNet:
   def linear2(self, V):
     return V @ self.W3 + self.b3
 
+  def save_parameters(self):
+    with open('trained_model.npz', 'wb') as f:
+      np.savez(f,
+        W0=self.W0, b0=self.b0,
+        W1=self.W1, b1=self.b1,
+        W2=self.W2, b2=self.b2,
+        W3=self.W3, b3=self.b3)
+
 
 def main():
   batch_size_train = 64
@@ -229,6 +251,7 @@ def main():
     batch_size=batch_size_test, shuffle=True)
 
   model = NumpyNet(learning_rate)
+  losses = []
 
   # train
   for x_batch, y_batch in tqdm(train_loader):
@@ -237,7 +260,20 @@ def main():
 
     one_hot_target = one_hot_encode(y_batch)
     loss = model.forward(x_batch, y_batch, one_hot_target)
+    model.step()
+    losses.append(loss)
 
+  model.save_parameters()
+
+  # test
+  correct = 0
+  for x_test, y_test in tqdm(test_loader):
+    x_test = x_test.numpy().squeeze()
+    y_test = y_test.numpy().squeeze()
+    test_predictions = model.predict(x_test)
+    correct += (test_predictions == y_test).sum()
+
+  print('accuracy:', correct * 100. / len(test_loader.dataset), '%')
 
 if __name__ == "__main__":
   main()
