@@ -25,6 +25,10 @@ def initialize_fc_weights(m, n):
   return rng.uniform(-math.sqrt(6/(m+n)), math.sqrt(6/(m+n)), (m,n))
 
 
+def linear(x, w, b):
+  return x @ w + b
+
+
 def relu(x):
   return np.maximum(x, 0)
 
@@ -54,7 +58,7 @@ def relu_derivative(x):
   return out
 
 
-def conv2_backward(X, dV, W):
+def conv_derivative(X, dV, W):
   """
   X = input volume that was convolved during the forward pass
   dV = gradient wrt output volume
@@ -98,13 +102,13 @@ class NumpyNet:
       z0 = relu(V0)
       V1 = self.conv2(z0)
       z1 = relu(V1.flatten())
-      h0 = self.linear1(z1)
+      h0 = linear(z1, self.W2, self.b2)
       z2 = relu(h0)
-      h1 = self.linear2(z2)
+      h1 = linear(z2, self.W3, self.b3)
       output.append(softmax(h1).argmax())
     return np.array(output)
 
-  def forward(self, x, y, y_one_hot):
+  def train(self, x, y, y_one_hot):
     loss_average = 0
     self.dW3_average = np.zeros((16, 10))
     self.db3_average= np.zeros(10)
@@ -123,10 +127,10 @@ class NumpyNet:
       V1 = self.conv2(z0)
       z1 = relu(V1.flatten())
 
-      h0 = self.linear1(z1)
+      h0 = linear(z1, self.W2, self.b2)
       z2 = relu(h0)
 
-      h1 = self.linear2(z2)
+      h1 = linear(z2, self.W3, self.b3)
       output = softmax(h1)
 
       loss, dh1 = cross_entropy(output, y[idx], y_one_hot[idx])
@@ -146,11 +150,11 @@ class NumpyNet:
       dz1 = (dh0 @ self.W2.T).reshape(8, 8, 8)
       dV1 = dz1 * relu_derivative(V1)
 
-      dW1, dz0 = conv2_backward(z0, dV1, self.W1)
+      dW1, dz0 = conv_derivative(z0, dV1, self.W1)
       db1 = dV1.mean(axis=(0, 1))
 
       dV0 = dz0 * relu_derivative(z0)
-      dW0, dimg = conv2_backward(img, dV0, self.W0)
+      dW0, dimg = conv_derivative(img, dV0, self.W0)
       db0 = dV0.mean(axis=(0, 1))
 
       self.dW3_average += dW3
@@ -212,12 +216,6 @@ class NumpyNet:
             V[i:i+kernel_size, j:j+kernel_size] * w) + bias
     return out_volume
 
-  def linear1(self, V):
-    return V @ self.W2 + self.b2
-
-  def linear2(self, V):
-    return V @ self.W3 + self.b3
-
   def save_parameters(self):
     with open('trained_model.npz', 'wb') as f:
       np.savez(f,
@@ -259,7 +257,7 @@ def main():
     y_batch = y_batch.numpy().squeeze()
 
     one_hot_target = one_hot_encode(y_batch)
-    loss = model.forward(x_batch, y_batch, one_hot_target)
+    loss = model.train(x_batch, y_batch, one_hot_target)
     model.step()
     losses.append(loss)
 
