@@ -1,15 +1,35 @@
-import math
+import numpy as np
+import copy
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 
+# ref: https://nlp.seas.harvard.edu/2018/04/03/attention.html
+
+
+def clones(module, N):
+  return nn.ModuleList([copy.deepcopy(module) for _ in range(N)])
+
+
+def subsequent_mask(size):
+  attn_shape = (1, size, size)
+  subsequent_mask = np.triu(np.ones(attn_shape), k=1).astype('uint8')
+  return torch.from_numpy(subsequent_mask) == 0
+
+
+def scaled_dot_product_attention(Q, K, V, dk):
+  scores = Q @ K.transpose(-2, -1) / np.sqrt(dk)
+  return F.softmax(scores, dim=-1) @ V
+
+
 class Transformer(nn.module):
 
-  def __init__(self, d_model=512):
+  def __init__(self, d_model, d_ff, vocab):
     super().__init__()
-    self.encoder = Encoder(d_model)
-    self.decoder = Decoder(d_model)
+    self.embeddings = Embeddings(vocab, d_model)
+    self.encoder = Encoder(d_model, d_ff)
+    self.decoder = Decoder(d_model, d_ff)
 
   def forward(self, x):
     pass
@@ -17,8 +37,9 @@ class Transformer(nn.module):
 
 class Encoder(nn.module):
 
-  def __init__(self, d_model):
+  def __init__(self, d_model, h):
     super().__init__()
+    self.layers = clones(EncoderLayer(d_model, h), 6)
 
   def forward(self, x):
     pass
@@ -26,7 +47,7 @@ class Encoder(nn.module):
 
 class EncoderLayer(nn.module):
 
-  def __init__(self, d_model):
+  def __init__(self, d_model, h):
     super().__init__()
 
   def forward(self, x):
@@ -45,54 +66,68 @@ class Decoder(nn.module):
 class Sublayer(nn.module):
 
   def __init__(self, d_model, layer_type):
-    self.function = MultiHeadAttention(d_model) if layer_type == 'multi-head-attention' \
-      else FeedForward(d_model)
+    self.function = MultiHeadAttention(d_model) \
+      if layer_type == 'multi-head-attention' \
+      else PositionwiseFeedForward(d_model)
     self.norm = LayerNorm(d_model)
 
   def forward(self, x):
     return self.norm(x + self.function(x))
 
 
-def attention(Q, K, V):
-  dk = Q.size(-1)
-  return F.softmax(Q @ K.T / math.sqrt(dk)) @ V
-
-
 class MultiHeadAttention(nn.module):
+  """
+  Assume dk == dv
+  """
 
   def __init__(self, d_model, h):
     super().__init__()
     assert d_model % h == 0
-    self.a = nn.Parameter(torch.ones(size))
+    dk = d_model // h
+    self.WO = nn.Parameter(torch.empty((d_model, d_model)))
+    self.layers = clones(SingleHeadAttention(d_model, dk), h)
+    self.reset_weights()
 
-  def forward(self, x):
-    pass
+  def reset_weights(self):
+    nn.init.xavier_uniform_(self.WO))
+
+  def forward(self, Q, K, V):
+    monolith_head = torch.cat([l(Q, K, V) for l in self.layers], dim=-1)
+    return monolith_head @ self.WO
 
 
 class SingleHeadAttention(nn.module):
 
   def __init__(self, d_model, dk):
     super().__init__()
+    self.dk = dk
     self.WQ = nn.Parameter(torch.empty((d_model, dk)))
     self.WK = nn.Parameter(torch.empty((d_model, dk)))
     self.WV = nn.Parameter(torch.empty((d_model, dk)))
+    self.reset_weights()
 
   def reset_weights(self):
     nn.init.xavier_uniform_(self.WQ)
     nn.init.xavier_uniform_(self.WK)
     nn.init.xavier_uniform_(self.WV)
 
-  def forward(self, x):
-    pass
+  def forward(self, Q, K, V):
+    query = Q @ self.WQ
+    key = K @ self.WK
+    value = V @ self.WV
+    return scaled_dot_product_attention(query, key, value, self.dk)
 
 
-class FeedForward(nn.module):
+class PositionwiseFeedForward(nn.Module):
 
-  def __init(self):
+  def __init__(self, d_model, d_ff, dropout=0.1):
     super().__init__()
+    self.h1 = nn.Linear(d_model, d_ff)
+    self.h2 = nn.Linear(d_ff, d_model)
+    self.dropout = nn.Dropout(dropout)
 
   def forward(self, x):
-    pass
+    return self.h2(self.dropout(F.relu(self.h1(x))))
 
 
 class LayerNorm(nn.Module):
@@ -108,12 +143,41 @@ class LayerNorm(nn.Module):
     return self.a * (x - mean) / (std + 1e-6) + self.b
 
 
+class Embeddings(nn.Module):
+
+  def __init__(self, vocab, d_model):
+    super().__init__()
+    self.lut = nn.Embedding(vocab, d_model)
+    self.d_model = d_model
+
+  def forward(self, x):
+    return self.lut(x) * np.sqrt(self.d_model)
+
+
+class PositionalEncoding(nn.Module):
+
+  def __init__(self, d_model, dropout, max_len=5000):
+    super().__init__()
+    self.dropout = nn.Dropout(p=dropout)
+    pe = torch.zeros(max_len, d_model)
+    position = torch.arange(0, max_len).unsqueeze(1)
+    div_term = torch.exp(torch.arange(0, d_model, 2) *
+                         -(np.log(10000.0) / d_model))
+    pe[:, 0::2] = torch.sin(position * div_term)
+    pe[:, 1::2] = torch.cos(position * div_term)
+    pe = pe.unsqueeze(0)
+    self.register_buffer('pe', pe)
+
+  def forward(self, x):
+    x = x + Variable(self.pe[:, :x.size(1)], 
+                     requires_grad=False)
+    return self.dropout(x)
+
 def main():
-  pass
-#  for p in model.parameters():
-#    if p.dim() > 1:
-#      nn.init.xavier_uniform(p)
+  d_model=512
+  d_ff=2048
 
 
 if __name__ == "__main__":
   main()
+
