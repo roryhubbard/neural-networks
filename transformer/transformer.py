@@ -33,7 +33,7 @@ def scaled_dot_product_attention(Q, K, V, dk):
 
 class Transformer(nn.Module):
 
-  def __init__(self, d_model, d_ff, h, vocab):
+  def __init__(self, d_model, d_ff, h, vocab, dropout=0.1):
     """
     d_model = dimension of layers between modules
     d_ff = dimension of hidden layer in feed forward sublayer
@@ -41,11 +41,26 @@ class Transformer(nn.Module):
     """
     super().__init__()
     self.embeddings = Embeddings(vocab, d_model)
+    self.positional_encoder = PositionalEncoding(d_model, dropout)
     self.encoder = Encoder(d_model, d_ff, h)
     self.decoder = Decoder(d_model, d_ff, h)
+    self.generator(d_model, vocab)
 
   def forward(self, x):
-    pass
+    h = self.embeddings(x)
+    h = self.position_encoder(h)
+    h = self.encoder(h)
+    h = self.decoder(h)
+    return self.generator(x)
+
+
+class Generator(nn.Module):
+  def __init__(self, d_model, vocab):
+    super().__init__()
+    self.proj = nn.Linear(d_model, vocab)
+
+  def forward(self, x):
+    return F.log_softmax(self.proj(x), dim=-1)
 
 
 class Encoder(nn.Module):
@@ -144,7 +159,7 @@ class SingleHeadAttention(nn.Module):
 
 class PositionwiseFeedForward(nn.Module):
 
-  def __init__(self, d_model, d_ff, dropout=0.1):
+  def __init__(self, d_model, d_ff, dropout):
     super().__init__()
     self.h1 = nn.Linear(d_model, d_ff)
     self.h2 = nn.Linear(d_ff, d_model)
@@ -215,7 +230,7 @@ def main():
   nl_tokenizer = get_tokenizer('spacy', language='nl_core_news_sm')
 
   train_iter, val_iter, test_iter = IWSLT2017(root='/home/chubb/datasets',
-                                                language_pair=('en', 'nl'))
+                                              language_pair=('en', 'nl'))
 
   en_train, nl_train = list(zip(*list(train_iter)))
 
@@ -239,6 +254,8 @@ def main():
   d_model = 512
   d_ff = 2048
   h = 8
+  n_tokens = max(len(en_vocab), len(nl_vocab))
+
 
 if __name__ == "__main__":
   main()
