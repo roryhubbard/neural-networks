@@ -25,11 +25,16 @@ def scaled_dot_product_attention(Q, K, V, dk):
 
 class Transformer(nn.module):
 
-  def __init__(self, d_model, d_ff, vocab):
+  def __init__(self, d_model, d_ff, h, vocab):
+    """
+    d_model = dimension of layers between modules
+    d_ff = dimension of hidden layer in feed forward sublayer
+    h = number of heads in mulit-head-attention
+    """
     super().__init__()
     self.embeddings = Embeddings(vocab, d_model)
-    self.encoder = Encoder(d_model, d_ff)
-    self.decoder = Decoder(d_model, d_ff)
+    self.encoder = Encoder(d_model, d_ff, h)
+    self.decoder = Decoder(d_model, d_ff, h)
 
   def forward(self, x):
     pass
@@ -37,48 +42,55 @@ class Transformer(nn.module):
 
 class Encoder(nn.module):
 
-  def __init__(self, d_model, h):
+  def __init__(self, d_model, d_ff, h):
     super().__init__()
-    self.layers = clones(EncoderLayer(d_model, h), 6)
+    self.layers = clones(EncoderLayer(d_model, d_ff, h), 6)
 
-  def forward(self, x):
-    pass
+  def forward(self, x, mask):
+    for l in self.layers:
+      h = l(x, mask)
+    return h
 
 
 class EncoderLayer(nn.module):
 
-  def __init__(self, d_model, h):
+  def __init__(self, d_model, d_ff, h):
     super().__init__()
+    self.self_attention = MultiHeadAttention(d_model, h)
+    self.norm1 = LayerNorm(d_model)
+    self.ff = PositionwiseFeedForward(d_model, d_ff)
+    self.norm2 = LayerNorm(d_model)
 
-  def forward(self, x):
-    pass
+  def forward(self, x, mask):
+    h = self.self_attention(x, x, x, mask)
+    h = self.norm1(h)
+    h = self.ff(h)
+    h = self.norm2(h)
+    return h
 
 
 class Decoder(nn.module):
 
-  def __init__(self, d_model):
+  def __init__(self, d_model, d_ff, h):
     super().__init__()
+    self.self_attention = MultiHeadAttention(d_model, h)
+    self.norm1 = LayerNorm(d_model)
+    self.source_attention = MultiHeadAttention(d_model, h)
+    self.norm2 = LayerNorm(d_model)
+    self.ff = PositionwiseFeedForward(d_model, d_ff)
+    self.norm3 = LayerNorm(d_model)
 
-  def forward(self, x):
-    pass
-
-
-class Sublayer(nn.module):
-
-  def __init__(self, d_model, layer_type):
-    self.function = MultiHeadAttention(d_model) \
-      if layer_type == 'multi-head-attention' \
-      else PositionwiseFeedForward(d_model)
-    self.norm = LayerNorm(d_model)
-
-  def forward(self, x):
-    return self.norm(x + self.function(x))
+  def forward(self, s, x, self_mask, source_mask):
+    h = self.self_attention(s, s, s, self_mask)
+    h = self.norm1(h)
+    h = self.source_attention(s, x, x, source_mask)
+    h = self.norm3(h)
+    h = self.ff(h)
+    h = self.norm2(h)
+    return h
 
 
 class MultiHeadAttention(nn.module):
-  """
-  Assume dk == dv
-  """
 
   def __init__(self, d_model, h):
     super().__init__()
@@ -99,6 +111,10 @@ class MultiHeadAttention(nn.module):
 class SingleHeadAttention(nn.module):
 
   def __init__(self, d_model, dk):
+    """
+    dk = dimension of projected subspace for query, key, and value
+      - Assumes dk == dv (dimension of projected value subspace can be different)
+    """
     super().__init__()
     self.dk = dk
     self.WQ = nn.Parameter(torch.empty((d_model, dk)))
@@ -119,6 +135,7 @@ class SingleHeadAttention(nn.module):
 
 
 class PositionwiseFeedForward(nn.Module):
+
 
   def __init__(self, d_model, d_ff, dropout=0.1):
     super().__init__()
@@ -147,11 +164,11 @@ class Embeddings(nn.Module):
 
   def __init__(self, vocab, d_model):
     super().__init__()
-    self.lut = nn.Embedding(vocab, d_model)
+    self.embed = nn.Embedding(vocab, d_model)
     self.d_model = d_model
 
   def forward(self, x):
-    return self.lut(x) * np.sqrt(self.d_model)
+    return self.embed(x) * np.sqrt(self.d_model)
 
 
 class PositionalEncoding(nn.Module):
@@ -174,8 +191,10 @@ class PositionalEncoding(nn.Module):
     return self.dropout(x)
 
 def main():
-  d_model=512
-  d_ff=2048
+  d_model = 512
+  d_ff = 2048
+  h = 8
+  return
 
 
 if __name__ == "__main__":
