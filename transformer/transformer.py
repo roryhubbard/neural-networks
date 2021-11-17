@@ -1,8 +1,16 @@
-import numpy as np
 import copy
+import numpy as np
+import spacy
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.utils.data import DataLoader
+
+import torchtext
+from torchtext.vocab import build_vocab_from_iterator
+from torchtext.data.utils import get_tokenizer
+from torchtext.datasets import IWSLT2017
 
 
 # ref: https://nlp.seas.harvard.edu/2018/04/03/attention.html
@@ -23,7 +31,7 @@ def scaled_dot_product_attention(Q, K, V, dk):
   return F.softmax(scores, dim=-1) @ V
 
 
-class Transformer(nn.module):
+class Transformer(nn.Module):
 
   def __init__(self, d_model, d_ff, h, vocab):
     """
@@ -40,7 +48,7 @@ class Transformer(nn.module):
     pass
 
 
-class Encoder(nn.module):
+class Encoder(nn.Module):
 
   def __init__(self, d_model, d_ff, h):
     super().__init__()
@@ -52,7 +60,7 @@ class Encoder(nn.module):
     return h
 
 
-class EncoderLayer(nn.module):
+class EncoderLayer(nn.Module):
 
   def __init__(self, d_model, d_ff, h):
     super().__init__()
@@ -69,7 +77,7 @@ class EncoderLayer(nn.module):
     return h
 
 
-class Decoder(nn.module):
+class Decoder(nn.Module):
 
   def __init__(self, d_model, d_ff, h):
     super().__init__()
@@ -90,7 +98,7 @@ class Decoder(nn.module):
     return h
 
 
-class MultiHeadAttention(nn.module):
+class MultiHeadAttention(nn.Module):
 
   def __init__(self, d_model, h):
     super().__init__()
@@ -101,14 +109,14 @@ class MultiHeadAttention(nn.module):
     self.reset_weights()
 
   def reset_weights(self):
-    nn.init.xavier_uniform_(self.WO))
+    nn.init.xavier_uniform_(self.WO)
 
   def forward(self, Q, K, V):
     monolith_head = torch.cat([l(Q, K, V) for l in self.layers], dim=-1)
     return monolith_head @ self.WO
 
 
-class SingleHeadAttention(nn.module):
+class SingleHeadAttention(nn.Module):
 
   def __init__(self, d_model, dk):
     """
@@ -135,7 +143,6 @@ class SingleHeadAttention(nn.module):
 
 
 class PositionwiseFeedForward(nn.Module):
-
 
   def __init__(self, d_model, d_ff, dropout=0.1):
     super().__init__()
@@ -190,12 +197,48 @@ class PositionalEncoding(nn.Module):
                      requires_grad=False)
     return self.dropout(x)
 
+
+def data_process(text_pairs, en_tokenizer, nl_tokenizer, en_vocab, nl_vocab):
+  data = []
+  for en_text, nl_text in text_pairs:
+    en_tensor = torch.tensor(en_vocab(en_tokenizer(en_text)), dtype=torch.long)
+    nl_tensor = torch.tensor(nl_vocab(en_tokenizer(nl_text)), dtype=torch.long)
+    data.append((en_tensor, nl_tensor))
+  return data
+
+
 def main():
+  en_nlp = spacy.load('en_core_web_sm')
+  nl_nlp = spacy.load('nl_core_news_sm')
+
+  en_tokenizer = get_tokenizer('spacy', language='en_core_web_sm')
+  nl_tokenizer = get_tokenizer('spacy', language='nl_core_news_sm')
+
+  train_iter, val_iter, test_iter = IWSLT2017(root='/home/chubb/datasets',
+                                                language_pair=('en', 'nl'))
+
+  en_train, nl_train = list(zip(*list(train_iter)))
+
+  en_vocab = build_vocab_from_iterator(map(en_tokenizer, en_train),
+                                       specials=['<unk>', '<pad>', '<bos>', '<eos>'])
+  en_vocab.set_default_index(en_vocab['<unk>'])
+  nl_vocab = build_vocab_from_iterator(map(nl_tokenizer, nl_train),
+                                       specials=['<unk>', '<pad>', '<bos>', '<eos>'])
+  nl_vocab.set_default_index(nl_vocab['<unk>'])
+
+  train_data = data_process(train_iter, en_tokenizer, nl_tokenizer, en_vocab, nl_vocab)
+  val_data = data_process(val_iter, en_tokenizer, nl_tokenizer, en_vocab, nl_vocab)
+  test_data = data_process(test_iter, en_tokenizer, nl_tokenizer, en_vocab, nl_vocab)
+
+  batch_size = 64
+
+  train_iter = DataLoader(train_data, batch_size=batch_size)
+  val_iter = DataLoader(val_data, batch_size=batch_size)
+  test_iter = DataLoader(test_data, batch_size=batch_size)
+
   d_model = 512
   d_ff = 2048
   h = 8
-  return
-
 
 if __name__ == "__main__":
   main()
