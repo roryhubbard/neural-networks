@@ -55,6 +55,7 @@ class Transformer(nn.Module):
 
 
 class Generator(nn.Module):
+
   def __init__(self, d_model, vocab):
     super().__init__()
     self.proj = nn.Linear(d_model, vocab)
@@ -254,7 +255,9 @@ def main():
   d_model = 512
   d_ff = 2048
   h = 8
-  n_tokens = max(len(en_vocab), len(nl_vocab))
+  vocab = max(len(en_vocab), len(nl_vocab))
+
+  transformer = Transformer(d_model, d_ff, h, vocab)
 
 
 if __name__ == "__main__":
