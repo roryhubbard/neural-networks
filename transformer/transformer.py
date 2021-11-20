@@ -19,8 +19,8 @@ def clones(module, N):
   return nn.ModuleList([copy.deepcopy(module) for _ in range(N)])
 
 
-def scaled_dot_product_attention(Q, K, V, dk):
-  scores = Q @ K.transpose(-2, -1) / np.sqrt(dk)
+def scaled_dot_product_attention(Q, K, V, mask, dk):
+  scores = Q @ K.transpose(-2, -1) / np.sqrt(dk) + mask
   return F.softmax(scores, dim=-1) @ V
 
 
@@ -33,18 +33,23 @@ class Transformer(nn.Module):
     h = number of heads in mulit-head-attention
     """
     super().__init__()
-    self.embeddings = Embeddings(src_vocab, d_model)
-    self.positional_encoder = PositionalEncoding(d_model, dropout)
+    self.src_embed = Embed(src_vocab, d_model, dropout)
+    self.tgt_embed = Embed(tgt_vocab, d_model, dropout)
     self.encoder = Encoder(d_model, d_ff, h, dropout)
     self.decoder = Decoder(d_model, d_ff, h, dropout)
     self.generator = Generator(d_model, tgt_vocab)
 
-  def forward(self, x):
-    h = self.embeddings(x)
-    h = self.position_encoder(h)
-    h = self.encoder(h)
-    h = self.decoder(h)
-    return self.generator(x)
+  def forward(self, src, tgt, src_mask, tgt_mask):
+    h = self.encode(h, src_mask)
+    h = self.decode(h, tgt, src_mask, tgt_mask)
+    return self.generator(h)
+
+  def encode(self, src, src_mask):
+    return self.encoder(self.src_embed(src), src_mask)
+
+  def decode(self, src, tgt, src_mask, tgt_mask):
+    return self.decoder(self.encode(src, src_mask),
+                        self.tgt_embed(tgt), src_mask, tgt_mask)
 
 
 class Generator(nn.Module):
@@ -73,17 +78,16 @@ class EncoderLayer(nn.Module):
 
   def __init__(self, d_model, d_ff, h, dropout):
     super().__init__()
-    self.self_attention = MultiHeadAttention(d_model, h, dropout)
+    self.src_attn = MultiHeadAttention(d_model, h, dropout)
     self.norm1 = LayerNorm(d_model)
     self.ff = PositionwiseFeedForward(d_model, d_ff, dropout)
     self.norm2 = LayerNorm(d_model)
 
   def forward(self, x, mask):
-    h = self.self_attention(x, x, x, mask)
+    h = self.src_attn(x, x, x, mask)
     h = self.norm1(h)
     h = self.ff(h)
-    h = self.norm2(h)
-    return h
+    return self.norm2(h)
 
 
 class Decoder(nn.Module):
@@ -92,9 +96,9 @@ class Decoder(nn.Module):
     super().__init__()
     self.layers = clones(DecoderLayer(d_model, d_ff, h, dropout), 6)
 
-  def forward(self, x, mask):
+  def forward(self, src, tgt, src_mask, tgt_mask):
     for l in self.layers:
-      h = l(x, mask)
+      h = l(src, tgt, src_mask, tgt_mask)
     return h
 
 
@@ -102,21 +106,20 @@ class DecoderLayer(nn.Module):
 
   def __init__(self, d_model, d_ff, h, dropout):
     super().__init__()
-    self.self_attention = MultiHeadAttention(d_model, h, dropout)
+    self.tgt_attn = MultiHeadAttention(d_model, h, dropout)
     self.norm1 = LayerNorm(d_model)
-    self.source_attention = MultiHeadAttention(d_model, h, dropout)
+    self.src_attn = MultiHeadAttention(d_model, h, dropout)
     self.norm2 = LayerNorm(d_model)
     self.ff = PositionwiseFeedForward(d_model, d_ff, dropout)
     self.norm3 = LayerNorm(d_model)
 
-  def forward(self, s, x, self_mask, source_mask):
-    h = self.self_attention(s, s, s, self_mask)
+  def forward(self, src, tgt, src_mask, tgt_mask):
+    h = self.tgt_attn(tgt, tgt, tgt, tgt_mask)
     h = self.norm1(h)
-    h = self.source_attention(s, x, x, source_mask)
+    h = self.src_attn(tgt, src, src, src_mask)
     h = self.norm3(h)
     h = self.ff(h)
-    h = self.norm2(h)
-    return h
+    return self.norm2(h)
 
 
 class MultiHeadAttention(nn.Module):
@@ -133,8 +136,8 @@ class MultiHeadAttention(nn.Module):
   def reset_weights(self):
     nn.init.xavier_uniform_(self.WO)
 
-  def forward(self, Q, K, V):
-    monolith_head = torch.cat([l(Q, K, V) for l in self.layers], dim=-1)
+  def forward(self, Q, K, V, mask):
+    monolith_head = torch.cat([l(Q, K, V, mask) for l in self.layers], dim=-1)
     h = monolith_head @ self.WO
     return self.dropout(h)
 
@@ -158,11 +161,11 @@ class SingleHeadAttention(nn.Module):
     nn.init.xavier_uniform_(self.WK)
     nn.init.xavier_uniform_(self.WV)
 
-  def forward(self, Q, K, V):
+  def forward(self, Q, K, V, mask):
     query = Q @ self.WQ
     key = K @ self.WK
     value = V @ self.WV
-    return scaled_dot_product_attention(query, key, value, self.dk)
+    return scaled_dot_product_attention(query, key, value, mask, self.dk)
 
 
 class PositionwiseFeedForward(nn.Module):
@@ -193,15 +196,17 @@ class LayerNorm(nn.Module):
     return self.a * (x - mean) / (std + 1e-6) + self.b
 
 
-class Embeddings(nn.Module):
+class Embed(nn.Module):
 
-  def __init__(self, vocab, d_model):
+  def __init__(self, vocab, d_model, dropout):
     super().__init__()
-    self.embed = nn.Embedding(vocab, d_model)
+    self.embedding = nn.Embedding(vocab, d_model)
+    self.positional_encoding = PositionalEncoding(d_model, dropout)
     self.d_model = d_model
 
   def forward(self, x):
-    return self.embed(x) * np.sqrt(self.d_model)
+    h = self.embedding(x) * np.sqrt(self.d_model)
+    return self.positional_encoding(h)
 
 
 class PositionalEncoding(nn.Module):
