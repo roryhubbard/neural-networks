@@ -270,19 +270,26 @@ def text_to_tensor(text, vocab, tokenizer):
                    torch.tensor([vocab['<eos>']])))
 
 
+def yield_tokens(data_iter, tokenizer, sample_idx):
+  for data_sample in data_iter:
+    yield tokenizer(data_sample[sample_idx])
+
+
 def main():
   src_tokenizer = get_tokenizer('spacy', language='en_core_web_sm')
   tgt_tokenizer = get_tokenizer('spacy', language='nl_core_news_sm')
+  specials = ['<unk>', '<pad>', '<bos>', '<eos>']
 
   train_iter = IWSLT2017(root='/home/chubb/datasets',
                          split='train', language_pair=('en', 'nl'))
-
-  src_train, tgt_train = list(zip(*list(train_iter)))
-
-  specials = ['<unk>', '<pad>', '<bos>', '<eos>']
-  src_vocab = build_vocab_from_iterator(map(src_tokenizer, src_train), specials=specials)
+  src_vocab = build_vocab_from_iterator(
+    yield_tokens(train_iter, src_tokenizer, 0), specials=specials)
   src_vocab.set_default_index(src_vocab['<unk>'])
-  tgt_vocab = build_vocab_from_iterator(map(tgt_tokenizer, tgt_train), specials=specials)
+
+  train_iter = IWSLT2017(root='/home/chubb/datasets',
+                         split='train', language_pair=('en', 'nl'))
+  tgt_vocab = build_vocab_from_iterator(
+    yield_tokens(train_iter, tgt_tokenizer, 1), specials=specials)
   tgt_vocab.set_default_index(tgt_vocab['<unk>'])
 
   def collate_fn(batch):
@@ -294,27 +301,36 @@ def main():
     tgt_batch = pad_sequence(tgt_batch, padding_value=tgt_vocab['<pad>'], batch_first=True)
     return src_batch, tgt_batch
 
-  train_iter, val_iter, test_iter = IWSLT2017(root='/home/chubb/datasets',
-                                              language_pair=('en', 'nl'))
+#  train_iter, val_iter, test_iter = IWSLT2017(root='/home/chubb/datasets',
+#                                              language_pair=('en', 'nl'))
+#  val_loader = DataLoader(val_iter, batch_size=batch_size, collate_fn=collate_fn)
+#  test_loader = DataLoader(test_iter, batch_size=batch_size, collate_fn=collate_fn)
 
-  batch_size = 64
-  train_loader = DataLoader(train_iter, batch_size=batch_size, collate_fn=collate_fn)
-  val_loader = DataLoader(val_iter, batch_size=batch_size, collate_fn=collate_fn)
-  test_loader = DataLoader(test_iter, batch_size=batch_size, collate_fn=collate_fn)
+  train_iter = IWSLT2017(root='/home/chubb/datasets',
+                         split='train', language_pair=('en', 'nl'))
+  bs = 32
+  train_loader = DataLoader(train_iter, batch_size=bs, collate_fn=collate_fn)
 
   d_model = 512
   d_ff = 2048
   h = 8
   dropout = 0.1
-  print(len(src_vocab), len(tgt_vocab))
 
-  transformer = Transformer(d_model, d_ff, h, len(src_vocab), len(tgt_vocab), dropout)
-  optimizer = torch.optim.Adam(transformer.parameters(), lr=0.0001, betas=(0.9, 0.98), eps=1e-9)
+  transformer = Transformer(d_model, d_ff, h,
+                            len(src_vocab), len(tgt_vocab), dropout)
+  optimizer = torch.optim.Adam(transformer.parameters(),
+                               lr=0.0001, betas=(0.9, 0.98), eps=1e-9)
+  criterion = nn.NLLLoss(ignore_index=src_vocab['<pad>'])
 
   for src_batch, tgt_batch in tqdm(train_loader):
-    src_mask, tgt_mask = create_masks(src_batch, tgt_batch, src_vocab['<pad>'], tgt_vocab['<pad>'])
+    src_mask, tgt_mask = create_masks(src_batch, tgt_batch,
+                                      src_vocab['<pad>'], tgt_vocab['<pad>'])
     out = transformer(src_batch, tgt_batch, src_mask, tgt_mask)
-    return
+    loss = criterion(out.transpose(1, 2), tgt_batch)
+
+    optimizer.zero_grad()
+    loss.backward()
+    optimizer.step()
 
 
 if __name__ == "__main__":
