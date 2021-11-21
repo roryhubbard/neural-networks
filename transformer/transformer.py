@@ -17,7 +17,7 @@ def scaled_dot_product_attention(Q, K, V, mask, dk):
 
 class Transformer(nn.Module):
 
-  def __init__(self, d_model, d_ff, h, src_vocab, tgt_vocab, dropout):
+  def __init__(self, d_model, d_ff, h, nel, ndl, src_vocab, tgt_vocab, dropout):
     """
     d_model = dimension of layers between modules
     d_ff = dimension of hidden layer in feed forward sublayer
@@ -26,9 +26,15 @@ class Transformer(nn.Module):
     super().__init__()
     self.src_embed = Embed(src_vocab, d_model, dropout)
     self.tgt_embed = Embed(tgt_vocab, d_model, dropout)
-    self.encoder = Encoder(d_model, d_ff, h, dropout)
-    self.decoder = Decoder(d_model, d_ff, h, dropout)
+    self.encoder = Encoder(nel, d_model, d_ff, h, dropout)
+    self.decoder = Decoder(ndl, d_model, d_ff, h, dropout)
     self.generator = Generator(d_model, tgt_vocab)
+    self.reset_weights()
+
+  def reset_weights(self):
+    nn.init.xavier_uniform_(self.src_embed.embedding.weight)
+    self.src_embed.embedding.weight = \
+      self.tgt_embed.embedding.weight = self.generator.fc.weight
 
   def forward(self, src, tgt, src_mask, tgt_mask):
     h = self.encode(src, src_mask)
@@ -46,17 +52,17 @@ class Generator(nn.Module):
 
   def __init__(self, d_model, vocab):
     super().__init__()
-    self.proj = nn.Linear(d_model, vocab)
+    self.fc = nn.Linear(d_model, vocab)
 
   def forward(self, x):
-    return F.log_softmax(self.proj(x), dim=-1)
+    return F.log_softmax(self.fc(x), dim=-1)
 
 
 class Encoder(nn.Module):
 
-  def __init__(self, d_model, d_ff, h, dropout):
+  def __init__(self, nel, d_model, d_ff, h, dropout):
     super().__init__()
-    self.layers = clones(EncoderLayer(d_model, d_ff, h, dropout), 6)
+    self.layers = clones(EncoderLayer(d_model, d_ff, h, dropout), nel)
 
   def forward(self, x, mask):
     for l in self.layers:
@@ -82,9 +88,9 @@ class EncoderLayer(nn.Module):
 
 class Decoder(nn.Module):
 
-  def __init__(self, d_model, d_ff, h, dropout):
+  def __init__(self, ndl, d_model, d_ff, h, dropout):
     super().__init__()
-    self.layers = clones(DecoderLayer(d_model, d_ff, h, dropout), 6)
+    self.layers = clones(DecoderLayer(d_model, d_ff, h, dropout), ndl)
 
   def forward(self, memory, tgt, src_mask, tgt_mask):
     for l in self.layers:
