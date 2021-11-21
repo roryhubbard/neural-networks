@@ -1,5 +1,6 @@
 from tqdm import tqdm
 import spacy
+import matplotlib.pyplot as plt
 
 import torch
 import torch.nn as nn
@@ -84,24 +85,45 @@ def main():
   d_model = 512
   d_ff = 2048
   h = 8
+  nel = 3
+  ndl = 3
   dropout = 0.1
 
-  transformer = Transformer(d_model, d_ff, h,
+  transformer = Transformer(d_model, d_ff, h, nel, ndl,
                             len(src_vocab), len(tgt_vocab), dropout)
+  # I do this within the class modules
+#  for p in transformer.parameters():
+#    if p.dim() > 1:
+#      nn.init.xavier_uniform_(p)
+
   optimizer = torch.optim.Adam(transformer.parameters(),
                                lr=0.0001, betas=(0.9, 0.98), eps=1e-9)
   criterion = nn.NLLLoss(ignore_index=src_vocab['<pad>'])
 
-  for src_batch, tgt_batch in tqdm(train_loader):
-    src_mask, tgt_mask = create_masks(src_batch, tgt_batch,
-                                      src_vocab['<pad>'], tgt_vocab['<pad>'])
-    out = transformer(src_batch, tgt_batch, src_mask, tgt_mask)
-    loss = criterion(out.transpose(1, 2), tgt_batch)
+  losses = []
 
-    optimizer.zero_grad()
-    loss.backward()
-    optimizer.step()
+  try:
+    for src_batch, tgt_batch in tqdm(train_loader):
+      tgt_input = tgt_batch[:, :-1]
+      src_mask, tgt_mask = create_masks(src_batch, tgt_input,
+                                        src_vocab['<pad>'], tgt_vocab['<pad>'])
+      out = transformer(src_batch, tgt_input, src_mask, tgt_mask)
+      tgt_output = tgt_batch[:, 1:]
+      loss = criterion(out.transpose(1, 2), tgt_output)
 
+      optimizer.zero_grad()
+      loss.backward()
+      optimizer.step()
+
+      losses.append(loss.item())
+
+  except KeyboardInterrupt:
+    pass
+
+  fig, ax = plt.subplots()
+  ax.plot(losses)
+  plt.show()
+  plt.close()
 
 if __name__ == "__main__":
   main()
