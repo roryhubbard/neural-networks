@@ -36,15 +36,15 @@ class Transformer(nn.Module):
     self.src_embed.embedding.weight = \
       self.tgt_embed.embedding.weight = self.generator.fc.weight
 
-  def forward(self, src, tgt, src_mask, tgt_mask):
+  def forward(self, src, tgt, src_mask=0, tgt_mask=0):
     h = self.encode(src, src_mask)
     h = self.decode(h, tgt, src_mask, tgt_mask)
     return self.generator(h)
 
-  def encode(self, src, src_mask):
+  def encode(self, src, src_mask=0):
     return self.encoder(self.src_embed(src), src_mask)
 
-  def decode(self, memory, tgt, src_mask, tgt_mask):
+  def decode(self, memory, tgt, src_mask=0, tgt_mask=0):
     return self.decoder(memory, self.tgt_embed(tgt), src_mask, tgt_mask)
 
 
