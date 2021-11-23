@@ -1,18 +1,22 @@
 import copy
 import numpy as np
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.autograd import Variable
 
 
 def clones(module, N):
   return nn.ModuleList([copy.deepcopy(module) for _ in range(N)])
 
 
-def scaled_dot_product_attention(Q, K, V, mask, dk):
-  scores = Q @ K.transpose(-2, -1) / np.sqrt(dk) + mask
+def scaled_dot_product_attention(Q, K, V, dk, additive_mask=None, key_padding_mask=None):
+  scores = Q @ K.transpose(-2, -1) / np.sqrt(dk)
+  if additive_mask is not None:
+    # unsqueeze batch dimension can be broadcasted
+    additive_mask = additive_mask.unsqueeze(0)
+    scores += additive_mask
+  if key_padding_mask is not None:
+    pass
   return F.softmax(scores, dim=-1) @ V
 
 
@@ -25,32 +29,32 @@ class Transformer(nn.Module):
     self.encoder = Encoder(num_encoder_layers, d_model, dim_feedforward, nhead, dropout)
     self.decoder = Decoder(num_decoder_layers, d_model, dim_feedforward, nhead, dropout)
 
-#  def reset_weights(self):
-#    nn.init.xavier_uniform_(self.src_embed.embedding.weight)
-#    self.src_embed.embedding.weight = \
-#      self.tgt_embed.embedding.weight = self.generator.fc.weight
+  def forward(self, src, tgt, src_mask=None, tgt_mask=None,
+              memory_mask=None, src_key_padding_mask=None,
+              tgt_key_padding_mask=None, memory_key_padding_mask=None):
+    h = self.encode(src, src_mask, src_key_padding_mask)
+    return self.decode(tgt, h, tgt_mask, memory_mask,
+                    tgt_key_padding_mask, memory_key_padding_mask)
 
-  def forward(self, src, tgt, src_mask=0, tgt_mask=0):
-    h = self.encode(src, src_mask)
-    h = self.decode(tgt, h, src_mask, tgt_mask)
-    return h
+  def encode(self, src, src_mask=None, src_key_padding_mask=None):
+    return self.encoder(src, src_mask, src_key_padding_mask)
 
-  def encode(self, src, src_mask=0):
-    return self.encoder(src, src_mask)
-
-  def decode(self, tgt, memory, src_mask=0, tgt_mask=0):
-    return self.decoder(tgt, memory, src_mask, tgt_mask)
+  def decode(self, tgt, memory, tgt_mask=None, memory_mask=None,
+             tgt_key_padding_mask=None, memory_key_padding_mask=None):
+    return self.decoder(tgt, memory, tgt_mask, memory_mask,
+                        tgt_key_padding_mask, memory_key_padding_mask)
 
 
-class Generator(nn.Module):
+class ResidualDropoutNormalize(nn.Module):
 
-  def __init__(self, d_model, vocab):
+  def __init__(self, d_model, dropout):
     super().__init__()
-    self.proj = nn.Linear(d_model, vocab)
+    self.dropout = nn.Dropout(dropout)
+    self.norm = LayerNorm(d_model)
 
-  def forward(self, x):
-    h = self.proj(x)
-    return F.log_softmax(h, dim=-1)
+  def forward(self, x, sublayer):
+    h = x + self.dropout(sublayer(x))
+    return self.norm(h)
 
 
 class Encoder(nn.Module):
@@ -60,9 +64,9 @@ class Encoder(nn.Module):
     self.layers = clones(
       EncoderLayer(d_model, dim_feedforward, nhead, dropout), num_encoder_layers)
 
-  def forward(self, x, mask):
+  def forward(self, x, src_mask, src_key_padding_mask):
     for l in self.layers:
-      x = l(x, mask)
+      x = l(x, src_mask, src_key_padding_mask)
     return x
 
 
@@ -70,16 +74,15 @@ class EncoderLayer(nn.Module):
 
   def __init__(self, d_model, dim_feedforward, nhead, dropout):
     super().__init__()
-    self.src_attn = MultiHeadAttention(d_model, nhead, dropout)
-    self.norm1 = LayerNorm(d_model)
-    self.ff = PositionwiseFeedForward(d_model, dim_feedforward, dropout)
-    self.norm2 = LayerNorm(d_model)
+    self.src_attn = MultiHeadAttention(d_model, nhead)
+    self.sublayer1 = ResidualDropoutNormalize(d_model, dropout)
+    self.ff = PositionwiseFeedForward(d_model, dim_feedforward)
+    self.sublayer2 = ResidualDropoutNormalize(d_model, dropout)
 
-  def forward(self, x, mask):
-    h = self.src_attn(x, x, x, mask)
-    h = self.norm1(h)
-    h = self.ff(h)
-    return self.norm2(h)
+  def forward(self, x, src_mask, src_key_padding_mask):
+    sublayer = lambda x: self.src_attn(x, x, x, src_mask, src_key_padding_mask)
+    h = self.sublayer1(x, sublayer)
+    return self.sublayer2(h, self.ff)
 
 
 class Decoder(nn.Module):
@@ -89,9 +92,11 @@ class Decoder(nn.Module):
     self.layers = clones(
       DecoderLayer(d_model, dim_feedforward, nhead, dropout), num_decoder_layers)
 
-  def forward(self, tgt, memory, src_mask, tgt_mask):
+  def forward(self, tgt, memory, tgt_mask, memory_mask,
+              tgt_key_padding_mask, memory_key_padding_mask):
     for l in self.layers:
-      tgt = l(tgt, memory, src_mask, tgt_mask)
+      tgt = l(tgt, memory, tgt_mask, memory_mask,
+              tgt_key_padding_mask, memory_key_padding_mask)
     return tgt
 
 
@@ -99,36 +104,35 @@ class DecoderLayer(nn.Module):
 
   def __init__(self, d_model, dim_feedforward, nhead, dropout):
     super().__init__()
-    self.tgt_attn = MultiHeadAttention(d_model, nhead, dropout)
-    self.norm1 = LayerNorm(d_model)
-    self.src_attn = MultiHeadAttention(d_model, nhead, dropout)
-    self.norm2 = LayerNorm(d_model)
-    self.ff = PositionwiseFeedForward(d_model, dim_feedforward, dropout)
-    self.norm3 = LayerNorm(d_model)
+    self.tgt_attn = MultiHeadAttention(d_model, nhead)
+    self.sublayer1 = ResidualDropoutNormalize(d_model, dropout)
+    self.memory_attn = MultiHeadAttention(d_model, nhead)
+    self.sublayer2 = ResidualDropoutNormalize(d_model, dropout)
+    self.ff = PositionwiseFeedForward(d_model, dim_feedforward)
+    self.sublayer3 = ResidualDropoutNormalize(d_model, dropout)
 
-  def forward(self, tgt, memory, src_mask, tgt_mask):
-    h = self.tgt_attn(tgt, tgt, tgt, tgt_mask)
-    h = self.norm1(h)
-    h = self.src_attn(tgt, memory, memory, src_mask)
-    h = self.norm3(h)
-    h = self.ff(h)
-    return self.norm2(h)
+  def forward(self, tgt, memory, tgt_mask, memory_mask,
+              tgt_key_padding_mask, memory_key_padding_mask):
+    sublayer = lambda tgt: self.tgt_attn(tgt, tgt, tgt, tgt_mask, tgt_key_padding_mask)
+    h = self.sublayer1(tgt, sublayer)
+    sublayer = lambda h: self.memory_attn(h, memory, memory, memory_mask, memory_key_padding_mask)
+    h = self.sublayer2(h, sublayer)
+    return self.sublayer3(h, self.ff)
 
 
 class MultiHeadAttention(nn.Module):
 
-  def __init__(self, d_model, nhead, dropout):
+  def __init__(self, d_model, nhead):
     super().__init__()
     assert d_model % nhead == 0
     dk = d_model // nhead
     self.WO = nn.Parameter(torch.empty((d_model, d_model)))
     self.layers = clones(SingleHeadAttention(d_model, dk), nhead)
-    self.dropout = nn.Dropout(dropout)
 
-  def forward(self, Q, K, V, mask):
-    monolith_head = torch.cat([l(Q, K, V, mask) for l in self.layers], dim=-1)
-    h = monolith_head @ self.WO
-    return self.dropout(h)
+  def forward(self, Q, K, V, additive_mask, key_padding_mask):
+    monolith_head = torch.cat([l(Q, K, V, additive_mask, key_padding_mask)
+                               for l in self.layers], dim=-1)
+    return monolith_head @ self.WO
 
 
 class SingleHeadAttention(nn.Module):
@@ -140,26 +144,25 @@ class SingleHeadAttention(nn.Module):
     self.WK = nn.Parameter(torch.empty((d_model, dk)))
     self.WV = nn.Parameter(torch.empty((d_model, dk)))
 
-  def forward(self, Q, K, V, mask):
+  def forward(self, Q, K, V, additive_mask, key_padding_mask):
     query = Q @ self.WQ
     key = K @ self.WK
     value = V @ self.WV
-    return scaled_dot_product_attention(query, key, value, mask, self.dk)
+    return scaled_dot_product_attention(query, key, value, self.dk,
+                                        additive_mask, key_padding_mask)
 
 
 class PositionwiseFeedForward(nn.Module):
 
-  def __init__(self, d_model, d_ff, dropout):
+  def __init__(self, d_model, d_ff):
     super().__init__()
     self.h1 = nn.Linear(d_model, d_ff)
     self.h2 = nn.Linear(d_ff, d_model)
-    self.dropout = nn.Dropout(dropout)
 
   def forward(self, x):
     h = self.h1(x)
     h = F.relu(h)
-    h = self.h2(h)
-    return self.dropout(h)
+    return self.h2(h)
 
 
 class LayerNorm(nn.Module):
@@ -173,35 +176,4 @@ class LayerNorm(nn.Module):
     mean = x.mean(-1, keepdim=True)
     std = x.std(-1, keepdim=True)
     return self.a * (x - mean) / (std + 1e-6) + self.b
-
-
-class TokenEmbedding(nn.Module):
-
-  def __init__(self, vocab, d_model):
-    super().__init__()
-    self.embedding = nn.Embedding(vocab, d_model)
-    self.d_model = d_model
-
-  def forward(self, x):
-    return self.embedding(x) * np.sqrt(self.d_model)
-
-
-class PositionalEncoding(nn.Module):
-  def __init__(self, d_model, dropout, max_len=5000):
-      super().__init__()
-      self.dropout = nn.Dropout(p=dropout)
-      
-      pe = torch.zeros(max_len, d_model)
-      position = torch.arange(0, max_len).unsqueeze(1)
-      div_term = torch.exp(torch.arange(0, d_model, 2) *
-                           -(np.log(10000.0) / d_model))
-      pe[:, 0::2] = torch.sin(position * div_term)
-      pe[:, 1::2] = torch.cos(position * div_term)
-      pe = pe.unsqueeze(0)
-      self.register_buffer('pe', pe)
-      
-  def forward(self, x):
-      x = x + Variable(self.pe[:, :x.size(1)], 
-                       requires_grad=False)
-      return self.dropout(x)
 
