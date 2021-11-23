@@ -16,11 +16,6 @@ class FullModel(nn.Module):
     self.pos_encod = pos_encod
     self.generator = generator
 
-#  def reset_weights(self):
-#    nn.init.xavier_uniform_(self.src_embed.embedding.weight)
-#    self.src_embed.embedding.weight = \
-#      self.tgt_embed.embedding.weight = self.generator.fc.weight
-
   def forward(self, src, tgt, src_mask=None, tgt_mask=None, memory_mask=None,
               src_key_padding_mask=None, tgt_key_padding_mask=None, memory_key_padding_mask=None):
     src_emb = self.pos_encod(self.src_tok_embed(src))
