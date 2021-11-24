@@ -100,15 +100,17 @@ def create_masks(src, tgt, src_pad_val, tgt_pad_val):
 
 
 def make_model(src_vocab_size, tgt_vocab_size, N=6, custom_transformer=False):
+  dropout = 0.1
   if custom_transformer:
-    transformer = Transformer(num_encoder_layers=N, num_decoder_layers=N)
+    transformer = Transformer(num_encoder_layers=N,
+                              num_decoder_layers=N, dropout=dropout)
   else:
-    transformer = nn.Transformer(num_encoder_layers=N,
-                                 num_decoder_layers=N, batch_first=True)
+    transformer = nn.Transformer(num_encoder_layers=N, num_decoder_layers=N,
+                                 dropout=dropout, batch_first=True)
 
   src_embedding = TokenEmbedding(src_vocab_size, transformer.d_model)
   tgt_embedding = TokenEmbedding(tgt_vocab_size, transformer.d_model)
-  positional_encoding = PositionalEncoding(transformer.d_model, 0.1)
+  positional_encoding = PositionalEncoding(transformer.d_model, dropout)
   generator = Generator(transformer.d_model, tgt_vocab_size)
 
   model = FullModel(transformer, src_embedding, tgt_embedding, positional_encoding, generator)
