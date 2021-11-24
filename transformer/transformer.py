@@ -9,14 +9,16 @@ def clones(module, N):
   return nn.ModuleList([copy.deepcopy(module) for _ in range(N)])
 
 
-def scaled_dot_product_attention(Q, K, V, dk, additive_mask=None, key_padding_mask=None):
+def scaled_dot_product_attention(Q, K, V, dk, correspondence_mask=None, key_padding_mask=None):
   scores = Q @ K.transpose(-2, -1) / np.sqrt(dk)
-  if additive_mask is not None:
-    # unsqueeze batch dimension can be broadcasted
-    additive_mask = additive_mask.unsqueeze(0)
-    scores += additive_mask
+  if correspondence_mask is not None:
+    # unsqueeze so batch dimension can be broadcasted
+    correspondence_mask = correspondence_mask.unsqueeze(0)
+    scores += correspondence_mask
   if key_padding_mask is not None:
-    pass
+    # unsqueeze so sequence length dimension can be broadcasted
+    key_padding_mask = key_padding_mask.unsqueeze(1)
+    scores += key_padding_mask
   return F.softmax(scores, dim=-1) @ V
 
 
@@ -129,8 +131,8 @@ class MultiHeadAttention(nn.Module):
     self.WO = nn.Parameter(torch.empty((d_model, d_model)))
     self.layers = clones(SingleHeadAttention(d_model, dk), nhead)
 
-  def forward(self, Q, K, V, additive_mask, key_padding_mask):
-    monolith_head = torch.cat([l(Q, K, V, additive_mask, key_padding_mask)
+  def forward(self, Q, K, V, correspondence_mask, key_padding_mask):
+    monolith_head = torch.cat([l(Q, K, V, correspondence_mask, key_padding_mask)
                                for l in self.layers], dim=-1)
     return monolith_head @ self.WO
 
@@ -144,12 +146,12 @@ class SingleHeadAttention(nn.Module):
     self.WK = nn.Parameter(torch.empty((d_model, dk)))
     self.WV = nn.Parameter(torch.empty((d_model, dk)))
 
-  def forward(self, Q, K, V, additive_mask, key_padding_mask):
+  def forward(self, Q, K, V, correspondence_mask, key_padding_mask):
     query = Q @ self.WQ
     key = K @ self.WK
     value = V @ self.WV
     return scaled_dot_product_attention(query, key, value, self.dk,
-                                        additive_mask, key_padding_mask)
+                                        correspondence_mask, key_padding_mask)
 
 
 class PositionwiseFeedForward(nn.Module):

@@ -82,18 +82,15 @@ def additive_subsequent_mask(sz):
 
 
 def create_masks(src, tgt, src_pad_val, tgt_pad_val):
-  batch_size, src_seq_len = src.shape
-  tgt_seq_len = tgt.shape[1]
+  tgt_mask = additive_subsequent_mask(tgt.shape[1])
 
-  src_mask = torch.zeros((src_seq_len, src_seq_len)).float()
-  tgt_mask = additive_subsequent_mask(tgt_seq_len)
+  src_key_padding_mask = torch.zeros_like(src).float() \
+    .masked_fill(src == src_pad_val, float('-inf'))
+  tgt_key_padding_mask = torch.zeros_like(tgt).float() \
+    .masked_fill(tgt == tgt_pad_val, float('-inf'))
 
-  # TODO: create these arrays these
-  memory_mask = src_key_padding_mask = tgt_key_padding_mask = memory_key_padding_mask = None
-#  src_pad_mask = (src == src_pad_val).unsqueeze(1)
-#  tgt_pad_mask = (tgt == tgt_pad_val).unsqueeze(1).expand(-1, tgt_seq_len, -1)
-#  src_mask.masked_fill(src_pad_mask, float('-inf'))
-#  tgt_mask.masked_fill(tgt_pad_mask, float('-inf'))
+  # just assume None for these
+  src_mask = memory_mask = memory_key_padding_mask = None
 
   return src_mask, tgt_mask, memory_mask, \
       src_key_padding_mask, tgt_key_padding_mask, memory_key_padding_mask
